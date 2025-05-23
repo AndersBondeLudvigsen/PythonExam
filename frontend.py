@@ -2,21 +2,20 @@ import streamlit as st
 import requests
 import pandas as pd
 from datetime import datetime
-import matplotlib.pyplot as plt # Import Matplotlib
+import matplotlib.pyplot as plt
 
 API_URL = 'http://localhost:5000/api'
 
-st.set_page_config(layout="wide") # Use wide layout for better dashboard view
-st.title("Familie Finans Dashboard")
+st.set_page_config(layout="wide")
+st.title("Dit Finans Dashboard")
+
+# --- Initialize requests session to handle cookies ---
+if 'session' not in st.session_state:
+    st.session_state.session = requests.Session()
 
 # --- Session state for signed-in user ---
 if "user" not in st.session_state:
     st.session_state.user = None
-
-# --- Utility for auth headers (if you later add JWTs) ---
-def auth_headers():
-    # Placeholder for JWT if you implement it. For now, we pass user_id in body/query.
-    return {} 
 
 # --- Login / Signup ---
 if st.session_state.user is None:
@@ -27,7 +26,7 @@ if st.session_state.user is None:
 
     if st.button(mode, key="auth_button"):
         endpoint = "/login" if mode == "Login" else "/signup"
-        res = requests.post(API_URL + endpoint, json={
+        res = st.session_state.session.post(API_URL + endpoint, json={
             "username": username,
             "password": password
         })
@@ -36,35 +35,36 @@ if st.session_state.user is None:
             data = res.json()
             if mode == "Login":
                 st.session_state.user = data["user"]
-                st.success(f"Logget ind som {data['user']['username']}!")
-                st.rerun() # CHANGED FROM st.experimental_rerun() TO st.rerun()
+                st.success(f"Logget ind som {st.session_state.user['username']}!")
+                st.rerun()
             else:
                 st.success("Bruger oprettet – du kan nu logge ind.")
         else:
             st.error(res.json().get("error", "Noget gik galt under login/registrering"))
-    
+
     st.markdown("---")
     st.info("Kører du dette for første gang? Du kan seed data til en testbruger:")
     if st.button("Seed Test Data (Sletter eksisterende data!)", key="seed_button"):
-        seed_res = requests.post(f"{API_URL}/seed")
+        seed_res = st.session_state.session.post(f"{API_URL}/seed")
         if seed_res.ok:
             st.success(seed_res.json().get('message', 'Data seedet!'))
-            # Optional: automatically log in the seeded user
-            st.session_state.user = {'id': seed_res.json().get('user_id'), 'username': 'testuser'}
-            st.rerun() # CHANGED FROM st.experimental_rerun() TO st.rerun()
+            st.rerun()
         else:
             st.error(seed_res.json().get('error', 'Fejl ved seeding af data.'))
-
 
 # --- Main dashboard once logged in ---
 else:
     st.sidebar.markdown(f"**Velkommen, {st.session_state.user['username']}!**")
-    st.sidebar.button("Log ud", on_click=lambda: st.session_state.update(user=None))
-    
-    user_id = st.session_state.user['id']
+    if st.sidebar.button("Log ud"):
+        logout_res = st.session_state.session.post(f"{API_URL}/logout")
+        if logout_res.ok:
+            st.session_state.user = None
+            st.success("Du er logget ud.")
+            st.rerun()
+        else:
+            st.error(logout_res.json().get('error', "Fejl ved logud."))
 
     st.markdown("---")
-
     col1, col2 = st.columns(2)
 
     with col1:
@@ -75,19 +75,13 @@ else:
             amount = st.number_input("Beløb", format="%.2f", key="txn_amount")
             date = st.date_input("Dato", datetime.now(), key="txn_date")
             if st.form_submit_button("Gem Transaktion"):
-                payload = {
-                    "user_id": user_id,
-                    "category": category,
-                    "amount": amount,
-                    "date": date.strftime('%Y-%m-%d')
-                }
-                res = requests.post(f"{API_URL}/transactions", json=payload)
+                payload = {"category": category, "amount": amount, "date": date.strftime('%Y-%m-%d')}
+                res = st.session_state.session.post(f"{API_URL}/transactions", json=payload)
                 if res.status_code == 201:
                     st.success("Transaktion tilføjet!")
-                    st.rerun() # CHANGED FROM st.experimental_rerun() TO st.rerun()
+                    st.rerun()
                 else:
                     st.error(res.json().get('error', "Kunne ikke tilføje transaktion"))
-        
         st.markdown("---")
 
         # --- Add Budget ---
@@ -96,18 +90,13 @@ else:
             budget_category = st.text_input("Kategori for budget", key="budget_category")
             monthly_limit = st.number_input("Månedlig grænse", min_value=0.0, format="%.2f", key="budget_limit")
             if st.form_submit_button("Gem Budget"):
-                payload = {
-                    "user_id": user_id,
-                    "category": budget_category,
-                    "monthly_limit": monthly_limit
-                }
-                res = requests.post(f"{API_URL}/budgets", json=payload)
+                payload = {"category": budget_category, "monthly_limit": monthly_limit}
+                res = st.session_state.session.post(f"{API_URL}/budgets", json=payload)
                 if res.status_code == 201:
                     st.success("Budget oprettet!")
-                    st.rerun() # CHANGED FROM st.experimental_rerun() TO st.rerun()
+                    st.rerun()
                 else:
                     st.error(res.json().get('error', "Kunne ikke oprette budget. Husk unik kategori."))
-        
         st.markdown("---")
 
         # --- Add Goal ---
@@ -117,24 +106,49 @@ else:
             target_amount = st.number_input("Målbeløb", min_value=0.0, format="%.2f", key="goal_target")
             due_date = st.date_input("Deadline (valgfri)", None, key="goal_due_date")
             if st.form_submit_button("Gem Mål"):
-                payload = {
-                    "user_id": user_id,
-                    "name": goal_name,
-                    "target_amount": target_amount,
-                    "due_date": due_date.strftime('%Y-%m-%d') if due_date else None
-                }
-                res = requests.post(f"{API_URL}/goals", json=payload)
+                payload = {"name": goal_name, "target_amount": target_amount, "due_date": due_date.strftime('%Y-%m-%d') if due_date else None}
+                res = st.session_state.session.post(f"{API_URL}/goals", json=payload)
                 if res.status_code == 201:
                     st.success("Mål oprettet!")
-                    st.rerun() # CHANGED FROM st.experimental_rerun() TO st.rerun()
+                    st.rerun()
                 else:
                     st.error(res.json().get('error', "Kunne ikke oprette mål."))
+        st.markdown("---")
+
+        # --- CSV Importer ---
+        st.header("Importer Transaktioner fra CSV")
+        uploaded = st.file_uploader("Vælg en CSV med kolonnerne: category,amount,date (YYYY-MM-DD)", type=["csv"], key="csv_uploader")
+        if uploaded is not None:
+            try:
+                df_csv = pd.read_csv(uploaded)
+            except Exception as e:
+                st.error(f"Kunne ikke læse CSV: {e}")
+            else:
+                missing = {"category", "amount", "date"} - set(df_csv.columns)
+                if missing:
+                    st.error(f"CSV mangler kolonner: {', '.join(missing)}")
+                else:
+                    if st.button("Importer transaktioner fra CSV"):
+                        errors = []
+                        for idx, row in df_csv.iterrows():
+                            payload = {"category": str(row["category"]), "amount": float(row["amount"]), "date": str(row["date"])}
+                            res = st.session_state.session.post(f"{API_URL}/transactions", json=payload)
+                            if not res.ok:
+                                errors.append(f"Række {idx+1}: {res.json().get('error', res.status_code)}")
+                        if not errors:
+                            st.success(f"Importeret {len(df_csv)} transaktioner!")
+                        else:
+                            st.error("Nogle transaktioner mislykkedes:")
+                            for err in errors:
+                                st.write(f"- {err}")
+                        st.rerun()
+                    
 
     with col2:
         # --- My transactions ---
         st.header("Mine Transaktioner")
-        # Fetch user-specific transactions
-        res_txns = requests.get(f"{API_URL}/transactions/{user_id}")
+        # Fetch user-specific transactions - backend will now get user_id from session
+        res_txns = st.session_state.session.get(f"{API_URL}/transactions") # Endpoint changed to remove user_id
         if res_txns.ok:
             txns = res_txns.json()
             df_txns = pd.DataFrame(txns)
@@ -148,14 +162,15 @@ else:
                 
                 fig_pie, ax_pie = plt.subplots(figsize=(8, 8))
                 ax_pie.pie(category_spending['amount'], labels=category_spending['category'], 
-                           autopct='%1.1f%%', startangle=90, pctdistance=0.85)
-                ax_pie.axis('equal') # Equal aspect ratio ensures that pie is drawn as a circle.
+                                autopct='%1.1f%%', startangle=90, pctdistance=0.85)
+                ax_pie.axis('equal') 
                 ax_pie.set_title("Forbrug fordelt på kategori")
                 st.pyplot(fig_pie)
 
                 # --- Matplotlib: Monthly Spending Trends Line Chart ---
                 st.subheader("Månedlige forbrugstendenser")
-                res_monthly = requests.get(f"{API_URL}/transactions/monthly_summary/{user_id}")
+                # Backend will now get user_id from session
+                res_monthly = st.session_state.session.get(f"{API_URL}/transactions/monthly_summary") 
                 if res_monthly.ok and res_monthly.json():
                     monthly_data = res_monthly.json()
                     df_monthly = pd.DataFrame(monthly_data)
@@ -183,7 +198,8 @@ else:
 
         # --- Budget Status ---
         st.header("Mine Budgetter")
-        res_budgets = requests.get(f"{API_URL}/budgets/status/{user_id}")
+        # Backend will now get user_id from session
+        res_budgets = st.session_state.session.get(f"{API_URL}/budgets/status") 
         if res_budgets.ok:
             budget_status = res_budgets.json()
             if budget_status:
@@ -204,7 +220,8 @@ else:
 
         # --- Goals Tracking ---
         st.header("Mine Mål")
-        res_goals = requests.get(f"{API_URL}/goals/{user_id}")
+        # Backend will now get user_id from session
+        res_goals = st.session_state.session.get(f"{API_URL}/goals") 
         if res_goals.ok:
             goals = res_goals.json()
             if goals:
@@ -223,13 +240,14 @@ else:
                         contribute_amount = st.number_input(f"Bidrag til {g['name']}", min_value=0.01, format="%.2f", key=f"contribute_{g['id']}")
                         if st.button(f"Tilføj bidrag til {g['name']}", key=f"btn_contribute_{g['id']}"):
                             payload = {
-                                "user_id": user_id,
+                                # No need to send user_id, backend gets it from session
                                 "amount": contribute_amount
                             }
-                            res_contribute = requests.put(f"{API_URL}/goals/{g['id']}/contribute", json=payload)
+                            # Backend will now get user_id from session
+                            res_contribute = st.session_state.session.put(f"{API_URL}/goals/{g['id']}/contribute", json=payload)
                             if res_contribute.ok:
                                 st.success("Bidrag tilføjet!")
-                                st.rerun() # CHANGED FROM st.experimental_rerun() TO st.rerun()
+                                st.rerun()
                             else:
                                 st.error(res_contribute.json().get('error', "Kunne ikke tilføje bidrag."))
                 st.markdown("---")
@@ -242,9 +260,10 @@ else:
         st.header("Finansiel Indsigt (AI)")
         if st.button("Få Personlig Indsigt"):
             with st.spinner("Henter indsigt fra AI..."):
-                # No longer sending transactions in body, backend fetches them
-                insight_res = requests.get(f"{API_URL}/insight/{user_id}") 
+                # Backend will now get user_id and transactions from session
+                insight_res = st.session_state.session.get(f"{API_URL}/insight") 
                 if insight_res.ok:
                     st.write(insight_res.json().get("insight"))
                 else:
                     st.error(insight_res.json().get("error", "Fejl ved hentning af indsigt"))
+                    
