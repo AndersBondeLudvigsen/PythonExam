@@ -508,9 +508,51 @@ def spending_forecast():
             "95th": round(float(p95), 2)
         }
     })
+
+
+
+@app.route('/api/weekly_pattern', methods=['GET'])
+@login_required
+def weekly_pattern():
+    user_id = session['user_id']
+
+    # 1) Hent dagligt forbrug og resample til alle dage
+    conn = get_db_connection()
+    df = pd.read_sql(
+        'SELECT date, amount FROM transactions WHERE user_id = ?',
+        conn, params=(user_id,), parse_dates=['date']
+    )
+    conn.close()
+
+    daily_df = (
+        df
+        .set_index('date')['amount']
+        .resample('D').sum()  # inkl. dage uden forbrug
+    )
+
+    # 2) Konverter til NumPy-array og reshape til uger × ugedag
+    daily_array = daily_df.values
+    n_days = daily_array.shape[0]
+    n_weeks = int(np.ceil(n_days / 7))
+    padded = np.pad(daily_array, (0, n_weeks * 7 - n_days), constant_values=0)
+    weeks_matrix = padded.reshape(n_weeks, 7)
+
+    # 3) Matematiske operationer
+    weekly_totals = weeks_matrix.sum(axis=1)
+    weekday_means = weeks_matrix.mean(axis=0)
+    weekday_stds = weeks_matrix.std(axis=0)
+    top_week = int(np.argmax(weekly_totals))
+
+    return jsonify({
+        'weekly_totals': weekly_totals.tolist(),
+        'weekday_means': weekday_means.tolist(),
+        'weekday_stds': weekday_stds.tolist(),
+        'top_week_index': top_week
+    }), 200
 # ----------------------------------------------------------------------------
 # Seed Data Endpoint
 # ----------------------------------------------------------------------------
+
 @app.route('/api/seed', methods=['POST'])
 def seed_data():
     """

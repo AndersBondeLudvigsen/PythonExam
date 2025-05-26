@@ -1,6 +1,7 @@
 import streamlit as st
 import requests
 import pandas as pd
+import numpy as np
 from datetime import datetime
 import matplotlib.pyplot as plt
 
@@ -283,6 +284,36 @@ else:
                     st.error(insight_res.json().get('error', "Fejl ved hentning af indsigt"))
 
         st.markdown("---")
+
+        st.header("Ugentlige Forbrugsmønstre")
+        if st.button("Hent Ugentlige Mønstre"):
+            with st.spinner("Henter ugentlige mønstre..."):
+                resp = st.session_state.session.get(f"{API_URL}/weekly_pattern")
+                if resp.status_code == 200:
+                    wp = resp.json()
+                    weekly_totals = np.array(wp['weekly_totals'])
+                    weekday_means = np.array(wp['weekday_means'])
+                    weekday_stds = np.array(wp['weekday_stds'])
+                    top_week = wp['top_week_index']
+
+                    # Bar-plot af ugentlige totaler
+                    fig1, ax1 = plt.subplots()
+                    ax1.bar(np.arange(len(weekly_totals)) + 1, weekly_totals)
+                    ax1.set_xlabel("Uge nummer")
+                    ax1.set_ylabel("Total forbrug (DKK)")
+                    st.pyplot(fig1)
+
+                    # Errorbar-plot af gennemsnit + std pr. ugedag
+                    days = ['Ma','Ti','On','To','Fr','Lø','Sø']
+                    fig2, ax2 = plt.subplots()
+                    ax2.errorbar(days, weekday_means, yerr=weekday_stds, fmt='o-', marker='s')
+                    ax2.set_xlabel("Ugedag")
+                    ax2.set_ylabel("Forbrug (DKK)")
+                    st.pyplot(fig2)
+
+                    st.markdown(f"**Dyreste uge:** Uge {top_week+1} med kr. {weekly_totals[top_week]:.2f}")
+                else:
+                    st.error(f"Kunne ikke hente data (status {resp.status_code})")
 # Histogram over dagligt forbrug
 
         # Monte Carlo Spending Forecast
