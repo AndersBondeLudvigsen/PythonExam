@@ -2,8 +2,12 @@ import os
 from dotenv import load_dotenv
 load_dotenv()
 
+import pandas as pd
+import numpy as np
+
 import sqlite3
 import requests
+import calendar
 # … rest of your imports …
 
 from datetime import datetime, timedelta
@@ -458,35 +462,129 @@ def get_insight():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+
+
+@app.route('/api/spending_forecast', methods=['GET'])
+@login_required
+def spending_forecast():
+    user_id = session['user_id']
+    conn = get_db_connection()
+    df = pd.read_sql(
+        'SELECT date, amount FROM transactions WHERE user_id = ?',
+        conn,
+        params=(user_id,),
+        parse_dates=['date']
+    )
+    conn.close()
+    if df.empty:
+        return jsonify({"message": "Ingen data"}), 200
+
+    daily = (
+        df
+        .set_index('date')['amount']
+        .resample('D').sum()
+        .fillna(0)
+        .values
+    )
+
+    today = datetime.now()
+    # Brug calendar til at finde antal dage i denne måned
+    days_in_month = calendar.monthrange(today.year, today.month)[1]
+    days_left = days_in_month - today.day
+
+    sims = 5000
+    samples = np.random.choice(daily, size=(sims, days_left), replace=True)
+    spent_so_far = daily[:today.day].sum()
+    total_sim = samples.sum(axis=1) + spent_so_far
+
+    p5, p50, p95 = np.percentile(total_sim, [5, 50, 95])
+
+    return jsonify({
+        "days_left": days_left,
+        "simulations": sims,
+        "percentiles": {
+            "5th": round(float(p5), 2),
+            "50th": round(float(p50), 2),
+            "95th": round(float(p95), 2)
+        }
+    })
 # ----------------------------------------------------------------------------
 # Seed Data Endpoint
 # ----------------------------------------------------------------------------
 @app.route('/api/seed', methods=['POST'])
 def seed_data():
+    """
+    Seeds the database with a test user and sample transactions, budgets, and goals.
+    WARNING: This deletes existing data in transactions, budgets, and goals tables.
+    """
     conn = get_db_connection()
     cursor = conn.cursor()
+
+    # Clear existing data for demonstration
     cursor.execute('DELETE FROM transactions')
     cursor.execute('DELETE FROM budgets')
     cursor.execute('DELETE FROM goals')
-    cursor.execute('DELETE FROM users')
+    cursor.execute('DELETE FROM users') # Clear users as well to ensure clean state
     conn.commit()
 
-    # Create test user
-    pw_hash = bcrypt.generate_password_hash('password123', rounds=12).decode('utf-8')
-    cursor.execute('INSERT INTO users (username, password) VALUES (?, ?)', ('testuser', pw_hash))
+    # Create a test user
+    test_username = 'testuser'
+    test_password = 'password123'
+    pw_hash = bcrypt.generate_password_hash(test_password, rounds=12).decode('utf-8')
+    cursor.execute('INSERT INTO users (username, password) VALUES (?, ?)', (test_username, pw_hash))
     conn.commit()
     test_user_id = cursor.lastrowid
 
-    # Insert sample data...
-    # (same as before)
+    # Sample Transactions for the test user (den korte liste du sendte)
+    sample_transactions = [
+        {'user_id': test_user_id, 'category': 'Mad', 'amount': 150.0, 'date': '2025-04-01'},
+        {'user_id': test_user_id, 'category': 'Transport', 'amount': 75.5, 'date': '2025-04-03'},
+        {'user_id': test_user_id, 'category': 'Underholdning', 'amount': 200.0, 'date': '2025-04-05'},
+        {'user_id': test_user_id, 'category': 'Regninger', 'amount': 450.0, 'date': '2025-04-07'},
+        {'user_id': test_user_id, 'category': 'Mad', 'amount': 80.0, 'date': '2025-04-10'},
+        {'user_id': test_user_id, 'category': 'Shopping', 'amount': 300.0, 'date': '2025-04-12'},
+        {'user_id': test_user_id, 'category': 'Mad', 'amount': 120.0, 'date': '2025-05-01'},
+        {'user_id': test_user_id, 'category': 'Transport', 'amount': 60.0, 'date': '2025-05-05'},
+        {'user_id': test_user_id, 'category': 'Underholdning', 'amount': 100.0, 'date': '2025-05-10'},
+        {'user_id': test_user_id, 'category': 'Mad', 'amount': 210.0, 'date': '2025-05-13'} # Over budget example for May Food
+    ]
+    for txn in sample_transactions:
+        cursor.execute(
+            'INSERT INTO transactions (user_id, category, amount, date) VALUES (?, ?, ?, ?)',
+            (txn['user_id'], txn['category'], txn['amount'], txn['date'])
+        )
+
+    # Sample Budgets for the test user
+    sample_budgets = [
+        {'user_id': test_user_id, 'category': 'Mad', 'monthly_limit': 300.0}, # This user will likely overspend here in May example
+        {'user_id': test_user_id, 'category': 'Transport', 'monthly_limit': 200.0},
+        {'user_id': test_user_id, 'category': 'Underholdning', 'monthly_limit': 150.0}
+    ]
+    for budget in sample_budgets:
+        cursor.execute(
+            'INSERT INTO budgets (user_id, category, monthly_limit) VALUES (?, ?, ?)',
+            (budget['user_id'], budget['category'], budget['monthly_limit'])
+        )
+
+    # Sample Goals for the test user
+    sample_goals = [
+        {'user_id': test_user_id, 'name': 'Ny Laptop', 'target_amount': 1500.0, 'current_amount': 250.0, 'due_date': '2025-08-31'},
+        {'user_id': test_user_id, 'name': 'Ferie', 'target_amount': 5000.0, 'current_amount': 1000.0, 'due_date': '2026-06-30'}
+    ]
+    for goal in sample_goals:
+        cursor.execute(
+            'INSERT INTO goals (user_id, name, target_amount, current_amount, due_date) VALUES (?, ?, ?, ?, ?)',
+            (goal['user_id'], goal['name'], goal['target_amount'], goal['current_amount'], goal['due_date'])
+        )
 
     conn.commit()
     conn.close()
-    return jsonify({'status': 'seeded', 'user_id': test_user_id}), 200
+    return jsonify({'status': 'seeded', 'user_id': test_user_id, 'message': f'Database seedet med testbruger ({test_username}) og data.'})
 
-# ----------------------------------------------------------------------------
-# Main
-# ----------------------------------------------------------------------------
+# Main entry point for running the Flask app
 if __name__ == '__main__':
-    init_db()
+    # Ensure database is initialized every time in debug mode for fresh start
+    # For production, you'd typically handle migrations separately or ensure init_db()
+    # is only called if tables don't exist.
+    init_db()  
     app.run(debug=True)
