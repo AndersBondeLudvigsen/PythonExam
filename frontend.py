@@ -44,14 +44,14 @@ if st.session_state.user is None:
             st.error(res.json().get("error", "Noget gik galt under login/registrering"))
 
     st.markdown("---")
-    st.info("Kører du dette for første gang? Du kan seed data til en testbruger:")
-    if st.button("Seed Test Data (Sletter eksisterende data!)", key="seed_button"):
-        seed_res = st.session_state.session.post(f"{API_URL}/seed")
-        if seed_res.ok:
-            st.success(seed_res.json().get('message', 'Data seedet!'))
-            st.rerun()
-        else:
-            st.error(seed_res.json().get('error', 'Fejl ved seeding af data.'))
+    # st.info("Kører du dette for første gang? Du kan seed data til en testbruger:")
+    # if st.button("Seed Test Data (Sletter eksisterende data!)", key="seed_button"):
+    #     seed_res = st.session_state.session.post(f"{API_URL}/seed")
+    #     if seed_res.ok:
+    #         st.success(seed_res.json().get('message', 'Data seedet!'))
+    #         st.rerun()
+    #     else:
+    #         st.error(seed_res.json().get('error', 'Fejl ved seeding af data.'))
 
 else:
     # --- Sidebar logout ---
