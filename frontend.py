@@ -130,7 +130,8 @@ else:
         st.header("Importer Transaktioner fra CSV")
         uploaded = st.file_uploader(
             "Vælg en CSV med kolonnerne: category,amount,date (YYYY-MM-DD)",
-            type=["csv"], key="csv_uploader"
+            type=["csv"],
+            key="csv_uploader"
         )
         if uploaded is not None:
             try:
@@ -140,22 +141,31 @@ else:
                     st.error(f"CSV mangler kolonner: {', '.join(missing)}")
                 else:
                     if st.button("Importer transaktioner fra CSV"):
-                        errors = []
-                        for idx, row in df_csv.iterrows():
-                            payload = {
-                                "category": str(row["category"]),
-                                "amount": float(row["amount"]),
-                                "date": str(row["date"])
+                        # 1) Byg liste af payloads med én comprehension
+                        payloads = [
+                            {
+                                "category": str(row.category),
+                                "amount": float(row.amount),
+                                "date": str(row.date)
                             }
-                            r = st.session_state.session.post(f"{API_URL}/transactions", json=payload)
+                            for row in df_csv.itertuples(index=False)
+                        ]
+
+                        # 2) Send alle payloads og indsamle fejl
+                        errors = []
+                        for idx, p in enumerate(payloads, start=1):
+                            r = st.session_state.session.post(f"{API_URL}/transactions", json=p)
                             if not r.ok:
-                                errors.append(f"Række {idx+1}: {r.json().get('error')}")
+                                errors.append(f"Række {idx}: {r.json().get('error')}")
+
+                        # 3) Vis resultat
                         if not errors:
-                            st.success(f"Importeret {len(df_csv)} transaktioner!")
+                            st.success(f"Importeret {len(payloads)} transaktioner!")
                         else:
                             st.error("Nogle transaktioner mislykkedes:")
                             for err in errors:
                                 st.write(f"- {err}")
+
                         st.rerun()
             except Exception as e:
                 st.error(f"Kunne ikke læse CSV: {e}")
