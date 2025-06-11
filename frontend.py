@@ -44,14 +44,15 @@ if st.session_state.user is None:
             st.error(res.json().get("error", "Noget gik galt under login/registrering"))
 
     st.markdown("---")
-    # st.info("Kører du dette for første gang? Du kan seed data til en testbruger:")
-    # if st.button("Seed Test Data (Sletter eksisterende data!)", key="seed_button"):
-    #     seed_res = st.session_state.session.post(f"{API_URL}/seed")
-    #     if seed_res.ok:
-    #         st.success(seed_res.json().get('message', 'Data seedet!'))
-    #         st.rerun()
-    #     else:
-    #         st.error(seed_res.json().get('error', 'Fejl ved seeding af data.'))
+    # Seed Test Data
+    st.info("Kører du dette for første gang? Du kan seed data til en testbruger:")
+    if st.button("Seed Test Data (Sletter eksisterende data!)", key="seed_button"):
+        seed_res = st.session_state.session.post(f"{API_URL}/seed_data")
+        if seed_res.ok:
+            st.success(seed_res.json().get('message', 'Data seedet!'))
+            st.rerun()
+        else:
+            st.error(seed_res.json().get('error', 'Fejl ved seeding af data.'))
 
 else:
     # --- Sidebar logout ---
@@ -75,11 +76,13 @@ else:
             category = st.text_input("Kategori", key="txn_category")
             amount = st.number_input("Beløb", format="%.2f", key="txn_amount")
             date = st.date_input("Dato", datetime.now(), key="txn_date")
+            description = st.text_area("Beskrivelse", key="txn_description")
             if st.form_submit_button("Gem Transaktion"):
                 payload = {
                     "category": category,
                     "amount": amount,
-                    "date": date.strftime('%Y-%m-%d')
+                    "date": date.strftime('%Y-%m-%d'),
+                    "description": description
                 }
                 res = st.session_state.session.post(f"{API_URL}/transactions", json=payload)
                 if res.status_code == 201:
@@ -136,36 +139,32 @@ else:
         if uploaded is not None:
             try:
                 df_csv = pd.read_csv(uploaded)
-                missing = {"category", "amount", "date"} - set(df_csv.columns)
+                missing = {"category", "amount", "date","description"} - set(df_csv.columns)
                 if missing:
                     st.error(f"CSV mangler kolonner: {', '.join(missing)}")
                 else:
                     if st.button("Importer transaktioner fra CSV"):
-                        # 1) Byg liste af payloads med én comprehension
                         payloads = [
                             {
                                 "category": str(row.category),
                                 "amount": float(row.amount),
-                                "date": str(row.date)
+                                "date": str(row.date),
+                                "description":str(row.description)
+
                             }
                             for row in df_csv.itertuples(index=False)
                         ]
-
-                        # 2) Send alle payloads og indsamle fejl
                         errors = []
                         for idx, p in enumerate(payloads, start=1):
                             r = st.session_state.session.post(f"{API_URL}/transactions", json=p)
                             if not r.ok:
                                 errors.append(f"Række {idx}: {r.json().get('error')}")
-
-                        # 3) Vis resultat
                         if not errors:
                             st.success(f"Importeret {len(payloads)} transaktioner!")
                         else:
                             st.error("Nogle transaktioner mislykkedes:")
                             for err in errors:
                                 st.write(f"- {err}")
-
                         st.rerun()
             except Exception as e:
                 st.error(f"Kunne ikke læse CSV: {e}")
@@ -257,7 +256,7 @@ else:
                 for g in goals:
                     st.write(f"**Mål: {g['name']}**")
                     st.write(
-                        f"Målbeløb: {g['target_amount']:.2f} DKK | "
+                        f"MålBeløb: {g['target_amount']:.2f} DKK | "
                         f"Indsamlet: {g['current_amount']:.2f} DKK"
                     )
                     if g['due_date']:
@@ -283,7 +282,7 @@ else:
         else:
             st.error("Kunne ikke hente mål.")
 
-        # Financial Insight (AI)
+        # AI Insight (General)
         st.header("Finansiel Indsigt (AI)")
         if st.button("Få Personlig Indsigt"):
             with st.spinner("Henter indsigt fra AI..."):
@@ -292,9 +291,24 @@ else:
                     st.write(insight_res.json().get("insight"))
                 else:
                     st.error(insight_res.json().get('error', "Fejl ved hentning af indsigt"))
-
         st.markdown("---")
 
+        # AI RAG Query
+        st.header("Spørg AI om dine data")
+        question = st.text_input("Hvad vil du vide?", key="rag_question")
+        if st.button("Stil spørgsmål", key="rag_button"):
+            if question:
+                with st.spinner("Spørger AI..."):
+                    resp = st.session_state.session.get(f"{API_URL}/ask_ai", params={"query": question})
+                    if resp.ok:
+                        st.write(resp.json().get("insight"))
+                    else:
+                        st.error(resp.json().get('error', "Fejl ved forespørgsel"))
+            else:
+                st.warning("Indtast venligst et spørgsmål.")
+        st.markdown("---")
+
+        # Ugentlige Forbrugsmønstre
         st.header("Ugentlige Forbrugsmønstre")
         if st.button("Hent Ugentlige Mønstre"):
             with st.spinner("Henter ugentlige mønstre..."):
@@ -319,12 +333,13 @@ else:
                     ax2.errorbar(days, weekday_means, yerr=weekday_stds, fmt='o-', marker='s')
                     ax2.set_xlabel("Ugedag")
                     ax2.set_ylabel("Forbrug (DKK)")
+                    ax2.set_ylim(bottom=0)
                     st.pyplot(fig2)
 
                     st.markdown(f"**Dyreste uge:** Uge {top_week+1} med kr. {weekly_totals[top_week]:.2f}")
                 else:
                     st.error(f"Kunne ikke hente data (status {resp.status_code})")
-# Histogram over dagligt forbrug
+        st.markdown("---")
 
         # Monte Carlo Spending Forecast
         st.header("Forecast: Forventet Månedligt Forbrug")
